@@ -1,4 +1,6 @@
 import React, { Component } from 'react';
+
+import { useState, useEffect } from "react";
 import {
   Alert,
   StyleSheet,
@@ -7,92 +9,139 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SplashScreen from 'expo-splash-screen';
+import Constants from "expo-constants";
+import * as SQLite from "expo-sqlite";
 
-const heightKey = '@MyApp:heightKey';
-const bmikey = '@MyApp:bmikey';
 
 SplashScreen.preventAutoHideAsync();
-  setTimeout(SplashScreen.hideAsync, 2000);
+setTimeout(SplashScreen.hideAsync, 2000);
 
-
-export default class App extends Component {
-  state = {
-    weight: '',
-    height: '',
-    bmi: '',
-  };
-
-  constructor() {
-    super();
-    this.onLoad();
+function openDatabase() {
+  if (Platform.OS === "web") {
+    return {
+      transaction: () => {
+        return {
+          executeSql: () => {},
+        };
+      },
+    };
   }
 
-  onLoad = async () => {
-    try {
-      const height = await AsyncStorage.getItem(heightKey);
-      this.setState({ height });
+  const db = SQLite.openDatabase("db.db");
+  return db;
+}
 
-      const bmi = await AsyncStorage.getItem(bmikey);
-      this.setState({ bmi: bmi });
-      
-    } catch (error) {
-      Alert.alert('Error', 'There was an error while loading the data');
-    }
+const db = openDatabase();
+
+function Items() {
+  const [items, setItems] = useState(null);
+
+  useEffect(() => {
+    db.transaction((tx) => {
+      tx.executeSql(
+        `select height, weight, bmi, date(date) as date from item order by date desc`, [],
+        (_, { rows: { _array } }) => setItems(_array)
+      );
+    });
+  }, []);
+
+  if (items === null || items.length === 0) {
+    return null;
   }
+
+  return (
+    <View style={styles.sectionContainer}>
+      <Text style={styles.heading}>BMI History</Text>
+      {items.map(({ id, height, weight, bmi, date }) => (
+          <Text style={styles.underHeading}>{date} : {bmi} (W:{weight}, H:{height})</Text>
+      ))}
+    </View>
+  );
+}
+
+
+export default function App() {
+  const [height, setHeight] = useState(null);
+  const [weight, setWeight] = useState(null);
+  const [bmi, setBmi] = useState(null);
+  //const [description, setDescription] = useState(null);
+
+
+
+  useEffect(() => {
+    db.transaction((tx) => {
+      // tx.executeSql(
+      //   "drop table item;"
+      // );
+      tx.executeSql(
+        "create table if not exists item (id integer primary key not null, height integer, weight integer, bmi numeric, date real);"
+      );
+    });
+  }, []);
 
   onSave = async () => {
-    const { weight, height } = this.state;
-    this.setState({ bmi: ''});
-    const bmi = "Body Mass Index is " + ((weight / (height * height)) * 703).toFixed(1)
-    this.setState({ bmi })
+    if (height === null || height === "") {
+      return false;
+    }
 
-    try {
-      await AsyncStorage.setItem(bmikey, bmi);
-      await AsyncStorage.setItem(heightKey, height);
-    } catch (error) {
-      Alert.alert('Error', 'There was an error while saving the data');
+    setBmi(((weight / (height * height)) * 703).toFixed(1));
+
+    db.transaction(
+      (tx) => {
+        tx.executeSql("insert into item (bmi, height, weight, date) values (?, ?, ?, julianday('now'))", [((weight / (height * height)) * 703).toFixed(1), height, weight]);
+        tx.executeSql("select * from item", [], (_, { rows }) =>
+          console.log(JSON.stringify(rows))
+        );
+      },
+      null
+    );
+  }
+
+  const description = (bmi) => {
+    if( bmi === null){
+      return null;
+    } else if(bmi <= 18.5){
+      return ("(Underweight)");
+    } else if (bmi <= 24.9 ){
+      return ("(Healthy)");
+    } else if (bmi <= 29.9){
+      return ("(Overweight)");
+    } else{
+      return ("(Obese)");
     }
   }
 
-  onHeightChange = (height) => this.setState({ height });
-  onWeightChange = (weight) => this.setState({ weight });
-
-  render() {
-    const { bmi, height } = this.state;
 
     return (
       <View style={styles.container}>
         <View>
           <Text style={styles.toolbar}>BMI Calculator</Text>
           <TextInput
-            onChangeText={this.onWeightChange}
+            onChangeText={x => setWeight(x)}
             placeholder="Weight in Pounds"
             style={styles.input}
           />
           <TextInput
-            onChangeText={this.onHeightChange}
+            onChangeText={x => setHeight(x)}
             value={height}
             style={styles.input}
             placeholder="Height in Inches"
           />
           <TouchableOpacity 
-          onPress={this.onSave}
+          onPress={() => {
+            onSave();
+          }}
           style={styles.button}>
             <Text style={styles.buttonText} >Compute BMI</Text>
           </TouchableOpacity>
-          <Text style={styles.bmiText}>{ bmi }</Text>
-          <Text style={styles.heading}>Assessing Your BMI
-          </Text>
-          <Text style={styles.underHeading}>Underweight: less than 18.5</Text>
-          <Text style={styles.underHeading}>Healthy 18.5 to 24.9</Text>
-          <Text style={styles.underHeading}>Overweight: 25.0 to 29.9</Text>
-          <Text style={styles.underHeading}>Obese: 30.0 or higher</Text>
+          <Text style={styles.bmiText}>Body Mass Index is { bmi }</Text>
+          <Text style={styles.bmiText}>{ description(bmi) }</Text>
+          <Items />
         </View>
       </View>
     );
   }
-}
 
 const styles = StyleSheet.create({
   container: {
@@ -134,11 +183,14 @@ const styles = StyleSheet.create({
     height: 75,
   },
   bmiText: {
+    marginLeft: 'auto',
+    marginRight: 'auto',
     fontSize: 28,
-    margin: 40,
   },
   heading:{
-    fontSize:20,
+    fontSize:23,
+    paddingLeft: 20,
+    fontWeight: 'bold',
   },
   underHeading: {
     fontSize:20,
